@@ -4,75 +4,139 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, FileSearch, AlertCircle } from "lucide-react";
+import { Loader2, FileSearch, AlertCircle, Download, Upload } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { checkTextSchema } from "../../../shared/schema";
+import { generatePlagiarismPDF } from "@/lib/pdfGenerator";
 
 const Index = () => {
   const [text, setText] = useState("");
   const [isChecking, setIsChecking] = useState(false);
   const [result, setResult] = useState(null);
+  const [inputMode, setInputMode] = useState("text"); // "text" or "file"
+  const [selectedFile, setSelectedFile] = useState(null);
   const {
     toast
   } = useToast();
   const handleCheck = async () => {
-    if (!text.trim()) {
-      toast({
-        title: "Error",
-        description: "Please enter some text to check",
-        variant: "destructive"
-      });
-      return;
-    }
-
-    // Validate using Zod schema
-    const validation = checkTextSchema.safeParse({ text });
-    if (!validation.success) {
-      const errorMessage = validation.error.errors[0]?.message || "Validation failed";
-      toast({
-        title: "Validation Error",
-        description: errorMessage,
-        variant: "destructive"
-      });
-      return;
-    }
-
-    setIsChecking(true);
-    setResult(null);
-    try {
-      const response = await fetch('/api/plagiarism-check', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          text
-        })
-      });
-      if (!response.ok) {
-        throw new Error('Failed to check plagiarism');
+    if (inputMode === "text") {
+      if (!text.trim()) {
+        toast({
+          title: "Error",
+          description: "Please enter some text to check",
+          variant: "destructive"
+        });
+        return;
       }
-      const data = await response.json();
-      setResult(data);
-      toast({
-        title: "Check Complete",
-        description: `Plagiarism score: ${data.plagiarismPercentage}%`
-      });
-    } catch (error) {
-      console.error('Error checking plagiarism:', error);
-      toast({
-        title: "Error",
-        description: "Failed to check plagiarism. Please try again.",
-        variant: "destructive"
-      });
-    } finally {
-      setIsChecking(false);
+
+      // Validate using Zod schema
+      const validation = checkTextSchema.safeParse({ text });
+      if (!validation.success) {
+        const errorMessage = validation.error.errors[0]?.message || "Validation failed";
+        toast({
+          title: "Validation Error",
+          description: errorMessage,
+          variant: "destructive"
+        });
+        return;
+      }
+
+      setIsChecking(true);
+      setResult(null);
+      try {
+        const response = await fetch('/api/plagiarism-check', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            text
+          })
+        });
+        if (!response.ok) {
+          throw new Error('Failed to check plagiarism');
+        }
+        const data = await response.json();
+        setResult(data);
+        toast({
+          title: "Check Complete",
+          description: `Plagiarism score: ${data.plagiarismPercentage}%`
+        });
+      } catch (error) {
+        console.error('Error checking plagiarism:', error);
+        toast({
+          title: "Error",
+          description: "Failed to check plagiarism. Please try again.",
+          variant: "destructive"
+        });
+      } finally {
+        setIsChecking(false);
+      }
+    } else {
+      // File upload mode
+      if (!selectedFile) {
+        toast({
+          title: "Error",
+          description: "Please select a file to check",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      setIsChecking(true);
+      setResult(null);
+      
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      try {
+        const response = await fetch('/api/plagiarism-check-file', {
+          method: 'POST',
+          body: formData
+        });
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to check plagiarism');
+        }
+        const data = await response.json();
+        setResult(data);
+        toast({
+          title: "Check Complete",
+          description: `Plagiarism score: ${data.plagiarismPercentage}%`
+        });
+      } catch (error) {
+        console.error('Error checking plagiarism:', error);
+        toast({
+          title: "Error",
+          description: error instanceof Error ? error.message : "Failed to check plagiarism. Please try again.",
+          variant: "destructive"
+        });
+      } finally {
+        setIsChecking(false);
+      }
     }
   };
   const getScoreColor = score => {
     if (score < 20) return "text-green-600 dark:text-green-400";
     if (score < 50) return "text-yellow-600 dark:text-yellow-400";
     return "text-red-600 dark:text-red-400";
+  };
+  
+  const handleDownloadPDF = async () => {
+    try {
+      await generatePlagiarismPDF(result, text);
+      toast({
+        title: "Success",
+        description: "Plagiarism report downloaded successfully"
+      });
+    } catch (error) {
+      console.error('Error downloading PDF:', error);
+      toast({
+        title: "Error",
+        description: "Failed to download PDF report",
+        variant: "destructive"
+      });
+    }
   };
   return <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-indigo-950">
       <div className="container mx-auto px-4 py-12">
@@ -91,22 +155,81 @@ const Index = () => {
         <div className="max-w-4xl mx-auto">
           <Card className="shadow-xl border-2" data-testid="card-input">
             <CardHeader>
-              <CardTitle>Enter Your Text</CardTitle>
-              <CardDescription>
-                Paste your text below to check for plagiarism against internet sources
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Enter Your Text</CardTitle>
+                  <CardDescription>
+                    {inputMode === "text" ? "Paste your text below to check for plagiarism" : "Upload a document to check for plagiarism"}
+                  </CardDescription>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant={inputMode === "text" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setInputMode("text");
+                      setSelectedFile(null);
+                    }}
+                  >
+                    Text
+                  </Button>
+                  <Button
+                    variant={inputMode === "file" ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => {
+                      setInputMode("file");
+                      setText("");
+                    }}
+                  >
+                    File
+                  </Button>
+                </div>
+              </div>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Textarea data-testid="input-text" placeholder="Paste your text here (minimum 100 characters)..." value={text} onChange={e => setText(e.target.value)} className="min-h-[200px] text-base" />
-              <div className="flex items-center justify-between gap-2 flex-wrap">
-                <p className="text-sm text-muted-foreground" data-testid="text-character-count">
-                  {text.length} characters
-                </p>
-                <Button data-testid="button-check-plagiarism" onClick={handleCheck} disabled={isChecking || text.length < 100} size="lg">
-                  {isChecking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {isChecking ? "Checking..." : "Check Plagiarism"}
-                </Button>
-              </div>
+              {inputMode === "text" ? (
+                <>
+                  <Textarea data-testid="input-text" placeholder="Paste your text here (minimum 100 characters)..." value={text} onChange={e => setText(e.target.value)} className="min-h-[200px] text-base" />
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <p className="text-sm text-muted-foreground" data-testid="text-character-count">
+                      {text.length} characters
+                    </p>
+                    <Button data-testid="button-check-plagiarism" onClick={handleCheck} disabled={isChecking || text.length < 100} size="lg">
+                      {isChecking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      {isChecking ? "Checking..." : "Check Plagiarism"}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center cursor-pointer hover:border-primary hover:bg-primary/5 transition-colors">
+                    <input
+                      type="file"
+                      accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) {
+                          setSelectedFile(e.target.files[0]);
+                        }
+                      }}
+                      className="hidden"
+                      id="file-input"
+                    />
+                    <label htmlFor="file-input" className="cursor-pointer block">
+                      <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
+                      <p className="font-medium">
+                        {selectedFile ? selectedFile.name : "Click to select a file"}
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        PDF, DOCX, or TXT (max 10MB)
+                      </p>
+                    </label>
+                  </div>
+                  <Button data-testid="button-check-plagiarism" onClick={handleCheck} disabled={isChecking || !selectedFile} size="lg" className="w-full">
+                    {isChecking && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {isChecking ? "Checking..." : "Check Plagiarism"}
+                  </Button>
+                </>
+              )}
 
               {isChecking && <Alert data-testid="alert-checking">
                   <AlertCircle className="h-4 w-4" />
@@ -119,8 +242,12 @@ const Index = () => {
 
           {result && <div className="mt-8 space-y-6">
               <Card className="shadow-xl border-2" data-testid="card-report">
-                <CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between">
                   <CardTitle>Plagiarism Report</CardTitle>
+                  <Button onClick={handleDownloadPDF} variant="outline" size="sm" className="gap-2">
+                    <Download className="w-4 h-4" />
+                    Download PDF
+                  </Button>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="grid md:grid-cols-2 gap-6">
